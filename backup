@@ -1,0 +1,1617 @@
+<template>
+  <span data-id="overview-history-activity">
+    <custom-user-activities :userLog = userLog />
+  </span>
+</template>
+
+<script lang="ts">
+import { Component, Vue } from 'nuxt-property-decorator';
+import { isNullOrUndefined, isObject } from '~/utils';
+import { IHistoryDetails, IAccessRights, SigningType, UserActivity } from '../../../models';
+
+const customUserActivities = Vue.component("custom-user-activities", {
+  render: function (createElement) {
+    function buildElements (current) {
+      if (!isObject(current)) {
+        return;
+      }
+      const splitUserLog = current.userLog.split(current.regex);
+      const elements = [];
+      for (let index = 0; index < splitUserLog.length; index++) {
+        const element = splitUserLog[index];
+        let ele;
+        if (current.toolTipContents.some(x => element === x)) {
+          ele = createElement("span", { class: 'font-medium bs_name_tooltip' }, element);
+        } else if (current.boldContents.some(x => element === x)) {
+          if (current.action === 'editrecipient') {
+            ele = createElement("span", [createElement("br"), createElement("span", { class: 'font-medium' }, element)]);
+          } else {
+            ele = createElement("span", { class: 'font-medium' }, element);
+          }
+        } else {
+          ele = createElement("span", element);
+        }
+        elements.push(ele);
+      }
+      return elements;
+    }
+
+    return createElement("span", buildElements(this.userLog));
+  },
+  props: ['userLog']
+})
+
+function getSplitUserLog (userActivity: UserActivity) {
+  const splitUserLog = userActivity.userLog.split(userActivity.regex);
+  for (let i = 0; i < splitUserLog.length; i++) {
+    const userLog = splitUserLog[i];
+    if (!isNullOrUndefined(userActivity.toolTipContents) && userActivity.toolTipContents.length > 0 && userActivity.toolTipContents.some((x) => !isNullOrUndefined(userLog) && userLog.includes(x) && userLog !== x)) {
+      let logs = [];
+      for (let j = 0; j < userActivity.toolTipContents.length; j++) {
+        const splitter = userActivity.toolTipContents[j];
+        if (!isNullOrUndefined(splitter) && userLog.includes(splitter) && userLog !== splitter) {
+          logs = userLog.split(splitter);
+          logs.splice(1, 0, splitter);
+        }
+      }
+      splitUserLog.splice(i, 1, ...logs);
+    }
+  }
+
+  return splitUserLog.filter((log) => {
+    return !isNullOrUndefined(log) && log.trim() !== '';
+  });
+}
+
+@Component({
+  components: {
+    customUserActivities
+  }
+})
+export default class UserActivityComponent extends Vue {
+  private data: IHistoryDetails = {};
+
+  private getTooltipTargetElement = x => `<span class='font-medium bs_name_tooltip'>${x}</span>`;
+
+  get stateSummaryData (): IAccessRights[] {
+    return this.$nuxt.$store.state.summaryData;
+  }
+
+  get stateAccessRights (): IAccessRights | null {
+    return this.$nuxt.$store.getters.summaryData;
+  }
+
+  get userLog (): UserActivity {
+    if (this.data && this.data.action && this.stateSummaryData.length) {
+      const action: string = this.data.action.toLowerCase();
+      if (action === 'sent') {
+        // we can remove the else condition, it is currently present to support old documents only
+        if (this.data.recipients) {
+          const singleSigners = this.data.recipients.filter(x => x.signType === SigningType.Single);
+          const groupSigners = this.data.recipients.filter(x => x.signType === SigningType.Group);
+          const recipients = [...new Set(singleSigners.map(x => x.recipientName))];
+          const groupName = [...new Set(groupSigners.map(x => x.groupName))];
+          const receivers = [...new Set(singleSigners.map(x => x.recipientName))];
+          const groupReceivers = [...new Set(groupSigners.map((x: { recipientName: any; }) => x.recipientName))];
+          let regex = new RegExp(`\\b(${this.data.name}|${receivers.join('|')})\\b`);
+          let toolTipContent = [this.data.name, ...receivers];
+          if (!isNullOrUndefined(groupSigners) && groupSigners.length > 0) {
+            const groupedMap = groupSigners.reduce(
+              (entryMap, e) => entryMap.set(e.groupName, [...entryMap.get(e.groupName) || [], e]),
+              new Map()
+            );
+            const formRecipientGroup = {
+              getGroupRecipients (x: any[][]) {
+                return '[ ' + x[0] + ' - ' + [...new Set(x[1].map((x: { recipientName: any; }) => x.recipientName))].join(', ') + ' ]';
+              }
+            }
+            const newGroupRecipients = Array.from(groupedMap, formRecipientGroup.getGroupRecipients, formRecipientGroup);
+            newGroupRecipients.forEach(value => {
+              recipients.push(value)
+            })
+
+            if (!isNullOrUndefined(singleSigners) && singleSigners.length === 0) {
+              regex = new RegExp(`\\b(${this.data.name}|${groupReceivers.join('|')}|${groupName.join('|')})\\b`);
+              toolTipContent = [this.data.name, ...groupReceivers];
+            } else {
+              regex = new RegExp(`\\b(${this.data.name}|${receivers.join('|')}|${groupReceivers.join('|')}|${groupName.join('|')})\\b`);
+              toolTipContent = [this.data.name, ...receivers, ...groupReceivers];
+            }
+          }
+          const sentOrCreate = this.$nuxt.$store.state.summary.disableEmails ? 'sentences.created' : 'sentences.sent';
+          return {
+            userLog: this.$nuxt.$t(sentOrCreate, {
+              sender: this.data.name,
+              receivers: recipients.join(', '),
+            }),
+            regex: regex,
+            toolTipContents: toolTipContent,
+            boldContents: groupName,
+            action: action
+          };
+        } else {
+          const uniqueSigners = [...new Set(this.stateAccessRights.signerDetails.map(x => x.signerName))];
+          const regex = new RegExp(`\\b(${this.data.name}|${uniqueSigners.join('|')})\\b`);
+          const toolTipContent = [this.data.name, ...uniqueSigners];
+          return {
+            userLog: this.$nuxt.$t('sentences.sent', {
+              sender: this.data.name,
+              receivers: uniqueSigners.join(', '),
+            }),
+            regex: regex,
+            toolTipContents: toolTipContent,
+            boldContents: [],
+            action: action
+          };
+        }
+      } else if (action === 'viewed') {
+        const regex = new RegExp(`\\b(${this.data.name})\\b`);
+        const toolTipContent = [this.data.name];
+        return {
+          userLog: this.$nuxt.$t('sentences.viewed', {
+            name: this.data.name,
+          }),
+          regex: regex,
+          toolTipContents: toolTipContent,
+          boldContents: [],
+          action: action
+        };
+      } else if (action === 'signed') {
+        const regex = new RegExp(`\\b(${this.data.name})\\b`);
+        const toolTipContent = [this.data.name];
+        return {
+          userLog: this.$nuxt.$t('sentences.signed', {
+            name: this.data.name,
+          }),
+          regex: regex,
+          toolTipContents: toolTipContent,
+          boldContents: [],
+          action: action
+        };
+      } else if (action === 'reviewed') {
+        const regex = new RegExp(`\\b(${this.data.name})\\b`);
+        const toolTipContent = [this.data.name];
+        return {
+          userLog: this.$nuxt.$t('sentences.reviewed', {
+            name: this.data.name,
+          }),
+          regex: regex,
+          toolTipContents: toolTipContent,
+          boldContents: [],
+          action: action
+        };
+      } else if (action === 'reassigned') {
+        const regex = new RegExp(`\\b(${this.data.name}|${this.data.toName || ''})\\b`);
+        const toolTipContent = [this.data.name, this.data.toName || ''];
+        return {
+          userLog: this.$nuxt.$t('sentences.reassigned', {
+            from: this.data.name,
+            to: this.data.toName || '',
+          }),
+          regex: regex,
+          toolTipContents: toolTipContent,
+          boldContents: [],
+          action: action
+        };
+      } else if (action === 'declined') {
+        const regex = new RegExp(`\\b(${this.data.name})\\b`);
+        const toolTipContent = [this.data.name];
+        return {
+          userLog: this.$nuxt.$t('sentences.declined', {
+            name: this.data.name,
+          }),
+          regex: regex,
+          toolTipContents: toolTipContent,
+          boldContents: [],
+          action: action
+        };
+      } else if (action === 'recalled' || action === 'revoked') {
+        const regex = new RegExp(`\\b(${this.data.name})\\b`);
+        const toolTipContent = [this.data.name];
+        return {
+          userLog: this.$nuxt.$t('sentences.revoked', {
+            name: this.data.name,
+          }),
+          regex: regex,
+          toolTipContents: toolTipContent,
+          boldContents: [],
+          action: action
+        };
+      } else if (action === 'expired') {
+        const regex = new RegExp(`\\b(${this.$nuxt.$t('sentences.expired')})\\b`);
+        return {
+          userLog: this.$nuxt.$t('sentences.expired'),
+          regex: regex,
+          toolTipContents: [],
+          boldContents: [],
+          action: action
+        };
+      } else if (action === 'authfailed') {
+        const regex = new RegExp(`\\b(${this.data.name})\\b`);
+        const toolTipContent = [this.data.name];
+        return {
+          userLog: this.$nuxt.$t('sentences.authFailed', {
+            name: this.data.name,
+          }),
+          regex: regex,
+          toolTipContents: toolTipContent,
+          boldContents: [],
+          action: action
+        };
+      } else if (action === 'completed') {
+        const regex = new RegExp(`\\b(${this.$nuxt.$t('sentences.completed')})\\b`);
+        return {
+          userLog: this.$nuxt.$t('sentences.completed'),
+          regex: regex,
+          toolTipContents: [],
+          boldContents: [],
+          action: action
+        };
+      } else if (action === 'downloaded') {
+        const regex = new RegExp(`\\b(${this.data.name})\\b`);
+        const toolTipContent = [this.data.name];
+        return {
+          userLog: this.$nuxt.$t('sentences.downloaded', {
+            name: this.data.name,
+          }),
+          regex: regex,
+          toolTipContents: toolTipContent,
+          boldContents: [],
+          action: action
+        };
+      } else if (action === 'downloadedverificationdata') {
+        const regex = new RegExp(`\\b(${this.data.name}|${this.data.toName || ''})\\b`);
+        const toolTipContent = [this.data.name, this.data.toName || ''];
+        return {
+          userLog: this.$nuxt.$t('sentences.downloadedVerificationData', {
+            name: this.data.name,
+            for: this.data.toName,
+          }),
+          regex: regex,
+          toolTipContents: toolTipContent,
+          boldContents: [],
+          action: action
+        };
+      } else if (action === 'createembeddedverificationlink') {
+        const regex = new RegExp(`\\b(${this.data.name}|${this.data.toName || ''})\\b`);
+        const toolTipContent = [this.data.name, this.data.toName || ''];
+        return {
+          userLog: this.$nuxt.$t('sentences.createEmbeddedVerificationLink', {
+            name: this.data.name,
+            for: this.data.toName,
+          }),
+          regex: regex,
+          toolTipContents: toolTipContent,
+          boldContents: [],
+          action: action
+        };
+      } else if (action === 'manualidentityverificationinitiated') {
+        const regex = new RegExp(`\\b(${this.data.name}|${this.data.toName || ''})\\b`);
+        const toolTipContent = [this.data.name, this.data.toName || ''];
+        return {
+          userLog: this.$nuxt.$t('sentences.manualIdentityVerificationInitiated', {
+            name: this.data.name,
+            for: this.data.toName,
+          }),
+          regex: regex,
+          toolTipContents: toolTipContent,
+          boldContents: [],
+          action: action
+        };
+      } else if (action === 'authenticationfailed') {
+        const regex = new RegExp(`\\b(${this.data.name})\\b`);
+        const toolTipContent = [this.data.name];
+        return {
+          userLog: this.$nuxt.$t('sentences.authenticationFailed', {
+            name: this.data.name,
+          }),
+          regex: regex,
+          toolTipContents: toolTipContent,
+          boldContents: [],
+          action: action
+        };
+      } else if (action === 'reminder') {
+        const toNames = this.data.toName.split(', ');
+        const regex = new RegExp(`\\b(${toNames.join('|')})\\b`);
+        return {
+          userLog: this.$nuxt.$t('sentences.reminder', {
+            to: this.data.toName,
+          }),
+          regex: regex,
+          toolTipContents: toNames,
+          boldContents: [],
+          action: action
+        };
+      } else if (action === 'accesscodechanged') {
+        const regex = new RegExp(`\\b(${this.data.name}|${this.data.toName})\\b`);
+        const toolTipContent = [this.data.name, this.data.toName];
+        return {
+          userLog: this.$nuxt.$t('sentences.accesscodechanged', {
+            by: this.data.name,
+            to: this.data.toName,
+          }),
+          regex: regex,
+          toolTipContents: toolTipContent,
+          boldContents: [],
+          acti
+
+
+        above code form useractivty vue
+
+
+
+        below code from overview vue
+        <template>
+  <div class="overview-section-container">
+    <overview-detail
+      :loadingClass="documentLoadingClass"
+      :leftSectionTitle="$nuxt.$t('documents.documentId')"
+    >
+      <copy-clipboard
+        :content="documentId"
+        :showCopyIcon="!isDocumentLoading"
+        :tooltipContent="$nuxt.$store.state.summary.copyTooltipContent"
+        @copyIconClick="copyDocumentId"
+        @copyIconTooltipClosed="onCopyTooltipClose"
+        data-id="overview-document-id"
+      />
+    </overview-detail>
+
+     <overview-detail
+       v-if = "canAddTags && !inEditingMode"
+      :loadingClass="propertyLoadingClass"
+      :leftSectionTitle="$nuxt.$t('documents.tags')"
+      :leftSectionClass="showAddTagDialog ? 'font-medium mt-3' : ''"
+      :rightSectionClass="showAddTagDialog ? '' : ''"
+    >
+
+    <div v-if="showAddTagDialog" class="tag-right-container">
+    <div class="bs-tag" id="tag-container" style="width: 416px;">
+    <Tags :initialValue = "labelDetails" @onChange="tagChange" />
+    <span :class="invalidWhiteSpace" style="margin-left: 5px;">{{ $nuxt.$t('documents.invalidWhiteSpace') }}</span>
+    <span :class="invalidCount" style="margin-left: 5px;"> {{ $nuxt.$t('documents.invalidCount') }} </span>
+    <span :class="invalidLength" style="margin-left: 5px;">  {{ $nuxt.$t('documents.invalidLength') }}  </span>
+    <div class="extend-action-buttons">
+      <div class="e-control e-btn mr-2 w-24" @click="cancel">{{ $t('summary.cancel') }}</div>
+      <button class="e-control e-btn e-primary ml-2 w-24" @click="save" :disabled="check">{{ $t('summary.save') }}</button>
+    </div>
+    </div>
+
+    </div>
+    <div v-else>
+      <nobr>
+    <span v-for="label in labelDetails" v-bind:key="label" style="white-space: nowrap;">
+
+        <span class="title_labels_1">
+      {{label}}
+
+        </span>
+    </span>
+
+    <span  @click='showAddDialog'  :style="{ visibility: !showAddTagDialog ? 'visible' : 'hidden' }" class="edit-button text-xs ml-2">
+       <span v-if="labelDetails.length !== 0">   {{ $t('documents.manageTag') }} </span>
+       <span v-else> {{ $t('documents.addTag') }} </span>
+     </span>
+      </nobr>
+</div>
+
+    </overview-detail>
+
+    <overview-detail :loadingClass="documentLoadingClass" :leftSectionTitle="$nuxt.$t('documents.status')">
+      <div>
+        <div>
+          <span :class="[getStatusColor, { '': !isDocumentLoading }]" data-id="overview-doc-status">
+            {{ documentStatus }}
+            <span v-if="!isDocumentLoading" class="text-xs bs-color-grey-0"> {{ contextualStatus }} </span>
+          </span>
+          <span v-if="isDeclined && declinedSignerName">
+            <span style="color: #666e80;">&#160;by</span>
+            <span class="bs_signer_name" data-id="overview-decliner-name">
+              <custom-decline-status :declinedSignerName = declinedSignerName />
+            </span>
+          </span>
+        </div>
+
+        <div class="mt-4" v-if="isDeclined || isRevoked">
+          <div v-if="getReason === null || getReason === undefined">
+            <div class="bs_rectangle_skelton_0"></div>
+            <br />
+            <div class="bs_rectangle_skelton_0"></div>
+            <br />
+            <div class="bs_rectangle_skelton_1"></div>
+            <br />
+          </div>
+          <div
+            v-else
+            class="bs_reason_message"
+            :class="{ 'bs-decline-reason': isDeclined, 'bs-revoke-reason': isRevoked }"
+          >
+            <span
+              data-id="overview-document-reason"
+              ref="bsmessage"
+              style="display:block;"
+              class="whitespace-pre-line"
+              >{{ getReason }}</span
+            >
+            <span @click="showMore" ref="showMore" class="bs_message_show" style="display:none;">
+              {{ $nuxt.$t('documents.showMore') }}
+            </span>
+            <span @click="showLess" ref="showLess" class="bs_message_show" style="display:none;">
+              {{ $nuxt.$t('documents.showLess') }}
+            </span>
+          </div>
+        </div>
+      </div>
+    </overview-detail>
+
+    <overview-detail :loadingClass="documentLoadingClass" :leftSectionTitle="$nuxt.$t('documents.sentBy')">
+      <div>
+        <span data-id="overview-document-sender" v-if="isBehalfUsers" class="bs_name_tooltip">{{ documentSentBy }}</span>
+        <span v-if="isDocumentSender && !isBehalfDocument" class="text-xs bs-color-grey-0">
+          ({{ $nuxt.$t('documents.me') }})
+        </span>
+        <span v-if="isBehalfDocument && isBehalfUsers"> On behalf </span>
+        <span v-if="isBehalfDocument" data-id="overview-document-sender" class="bs_name_tooltip">{{ behalfSenderName }}</span>
+      </div>
+    </overview-detail>
+
+    <overview-detail :loadingClass="documentLoadingClass" :leftSectionTitle="sentOnOrScheduledOn">
+      <div data-id="overview-document-senton">
+        {{ documentSentOn }}
+      </div>
+    </overview-detail>
+
+    <overview-detail
+      :loadingClass="documentLoadingClass"
+      :leftSectionTitle="$nuxt.$t('documents.lastActivity')"
+    >
+      <div data-id="overview-document-lastactivity">
+        {{ documentLastActivity }}
+        <span v-if="!isDocumentLoading" class="text-xs bs-color-grey-0"> {{ lastActivity }} </span>
+      </div>
+    </overview-detail>
+
+    <div class="custom-properties" v-if="!isPropertiesLoading">
+      <overview-detail
+        v-if="canDisplayExpiryDate"
+        :loadingClass="documentLoadingClass"
+        :leftSectionTitle="documentContextualTitle"
+        :leftSectionClass="showExtendExpiry ? 'font-medium' : ''"
+        data-id="overview-document-finalized-title"
+        rightSectionClass="flex-center"
+      >
+        <div v-if="showExtendExpiry" data-id="overview-extend-expiry">
+          <extend-expiry
+            :access-rights="stateAccessRights"
+            :warn-expiry="isExpiryAlert"
+            @completed="showExtendExpiry = false"
+            @refresh="refreshOverview"
+          />
+        </div>
+        <div v-else data-id="overview-document-finalized">
+          {{ finalizedStateDate }}
+        </div>
+        <div v-if="!showExtendExpiry && canSenderEdit && !inEditingMode && stateAccessRights.status === 'InProgress'">
+          <div
+            v-tooltip
+            :data-tooltip-disable="canExtendExpiry"
+            :data-title="$t('summary.maxLimitReached')"
+            data-id="overview-edit-expiry"
+            class="edit-button text-xs flex ml-2"
+            :class="{ disabled: !canExtendExpiry }"
+            @click="showExtendExpiry = canExtendExpiry">
+            {{ $t('summary.edit') }}
+          </div>
+        </div>
+      </overview-detail>
+      <overview-detail
+        v-if="(stateIsDocumentSender && isStillValidDocument) || (canSendReminder && isStillValidDocument)"
+        :loadingClass="propertyLoadingClass"
+        :leftSectionTitle="$nuxt.$t('documents.autoReminder')"
+        :leftSectionClass="isIntervalEditMode ? 'font-medium' : ''"
+      >
+        <div>
+          <span v-if="isPropertiesLoading">{{ loadingText }}</span>
+          <div v-else>
+            <ReminderSettings
+              :reminderSettings="reminderSettings"
+              :reminderEditMode="reminderEditMode"
+              :expiryDateProp="expiryDateProp"
+              :canUseAutoRemainder="canUseAutoRemainder"
+            />
+          </div>
+        </div>
+      </overview-detail>
+
+      <overview-detail
+        :loadingClass="documentLoadingClass"
+        :leftSectionTitle="$nuxt.$t('documents.documentDownloadOption')"
+        :leftSectionClass="isIntervalEditMode ? 'font-medium' : ''"
+      >
+        <div>
+          {{ documentDownloadOption }}
+        </div>
+      </overview-detail>
+
+      <overview-detail
+        v-if="isExpiryAlert && isStillValidDocument && canShowFinalizedDate && !isBulklinkDocument"
+        :loadingClass="documentLoadingClass"
+        :leftSectionTitle="$nuxt.$t('overview.expiryAlert')"
+        data-id="overview-document-expiry-title"
+      >
+        <div data-id="overview-document-expiry-alert">
+          {{ expiryAlertDate }}
+        </div>
+      </overview-detail>
+      <overview-detail
+        :loadingClass="propertyLoadingClass"
+        :leftSectionTitle="$nuxt.$t('documents.fileName')"
+      >
+        <div>
+          <span class="bs_summary_loading" v-if="isPropertiesLoading">{{ loadingText }}</span>
+          <div v-else class="flex items-center overview-files-container">
+            <div
+              data-id="overview-document-files"
+              class="overview-document-files"
+              :class="{ 'print-and-sign-enabled': canUploadPrintAndSign }"
+            >
+              <div
+                v-for="(file, index) in documentFileName"
+                :key="index"
+                :data-id="'overview-document-file-' + (index + 1)"
+              >
+                {{ documentHasSingleFile ? `${index + 1}- ` : '' }}
+                {{ file.documentName }}
+              </div>
+            </div>
+            <div v-if="canUploadPrintAndSign" class="flex items-center">
+              <div class=""></div>
+              <label for="upload-document-button" class="edit-button text-xs upload-document-button">{{
+                $nuxt.$t('overview.uploadScannedDocument')
+              }}</label>
+              <input
+                type="file"
+                id="upload-document-button"
+                name="upload-document-button"
+                accept=".pdf"
+                class="hidden"
+                @change="uploadScannedDocument"
+                ref="uploadInput"
+              />
+              <span
+                class="bs-info-icon"
+                :title="$nuxt.$t('sentences.uploadScannedDocumentTooltip')"
+                v-tooltip="{ cssClass: 'upload-scanned-tooltip' }"
+              ></span>
+            </div>
+          </div>
+        </div>
+      </overview-detail>
+
+      <overview-detail
+        v-if="documentMessage != '-'"
+        :loadingClass="propertyLoadingClass"
+        :leftSectionTitle="$nuxt.$t('documents.message')"
+      >
+        <span class="bs_summary_loading" v-if="isPropertiesLoading">
+          {{ loadingText }}
+        </span>
+        <span v-else data-id="overview-document-message" class="overview-document-message">
+          <span ref="bsmessage" class="whitespace-pre-line">{{ documentMessage }} </span>
+        </span>
+        <span @click="showMore" ref="showMore" class="bs_message_show" style="display:none;">{{
+          $nuxt.$t('documents.showMore')
+        }}</span>
+        <span @click="showLess" ref="showLess" class="bs_message_show" style="display:none;">{{
+          $nuxt.$t('documents.showLess')
+        }}</span>
+      </overview-detail>
+
+      <overview-detail
+        v-if="isSignOrderEnabled"
+        :loadingClass="documentLoadingClass"
+        :leftSectionTitle="$nuxt.$t('documents.signingOrder')"
+      >
+        <div data-id="overview-document-signorder">
+          {{ $nuxt.$t('documents.enabled') }}
+        </div>
+      </overview-detail>
+
+      <overview-detail
+        v-if="isQESEnabled"
+        :loadingClass="documentLoadingClass"
+        :leftSectionTitle="$nuxt.$t('Qualified Electronic Signature')"
+      >
+        <div data-id="overview-document-qualifiedElectronicSignature">
+          {{ $nuxt.$t('documents.enabled') }}
+        </div>
+      </overview-detail>
+
+      <overview-detail
+        v-if="!isDocumentLoading && isPrintAndSignEnabled"
+        :loadingClass="propertyLoadingClass"
+        :leftSectionTitle="$nuxt.$t('documents.printAndSign')"
+      >
+        <div v-if="isPropertiesLoading">{{ loadingText }}</div>
+        <div v-else data-id="overview-document-printandsign">
+          {{ $nuxt.$t('overview.enabled') }}
+        </div>
+      </overview-detail>
+      <overview-detail
+        v-if="!isDocumentLoading && brandName.length"
+        :loadingClass="propertyLoadingClass"
+        :leftSectionTitle="$nuxt.$t('overview.brandProfile')"
+      >
+        <div v-if="isPropertiesLoading">{{ loadingText }}</div>
+        <div v-else data-id="overview-document-brandprofile">
+          {{ brandName }}
+        </div>
+      </overview-detail>
+
+      <overview-detail
+        v-if="!isDocumentLoading && applicationName.length && isDocumentSender"
+        :loadingClass="propertyLoadingClass"
+        :leftSectionTitle="$nuxt.$t('overview.applicationName')"
+      >
+        <div v-if="isPropertiesLoading">{{ loadingText }}</div>
+        <div v-else data-id="overview-document-applicationname">
+          {{ applicationName }}
+        </div>
+      </overview-detail>
+
+      <overview-detail
+        v-if="ccDetailsPartOne && ccDetailsPartOne.length"
+        :loadingClass="propertyLoadingClass"
+        leftSectionTitle="CC"
+      >
+        <div data-id="overview-document-cc" class="cc-details-container">
+          <div v-if="isPropertiesLoading">{{ loadingText }}</div>
+          <div v-else-if="!ccDetails">-</div>
+          <div v-else>
+            <ul>
+              <li v-for="(emailPartOne, index) in ccDetailsPartOne">
+                {{ emailPartOne }}
+              </li>
+              <div v-if="ccDetailsPartTwo.length" class="cc-second-part">
+                <input type="checkbox" id="check-toggle" />
+                <label
+                  :data-show-more="$nuxt.$t('documents.showMore')"
+                  :data-show-less="$nuxt.$t('documents.showLess')"
+                  for="check-toggle"
+                ></label>
+                <ul>
+                  <li v-for="(emailPartTwo, index) in ccDetailsPartTwo">{{ emailPartTwo }}</li>
+                </ul>
+              </div>
+            </ul>
+          </div>
+        </div>
+      </overview-detail>
+
+
+      below code overview ts 
+      import moment from 'moment';
+import axios, { AxiosError, CancelTokenSource } from 'axios';
+import { Component, Prop, Vue, Watch } from 'nuxt-property-decorator';
+import {
+  AnalyticsAction,
+  DocumentStatus,
+  IAccessRights,
+  IHistoryDetails,
+  SignerStatus,
+  UserInsight,
+  UserInsightAction,
+  UserInsightOrigin,
+  UserInsightPage,
+  IUploadDocumentNotification,
+  DOCUMENT_UPLOAD_NOTIFICATION,
+  DeclineStatus,
+  DocumentDownloadOption,
+  ISignerDetail,
+} from '../../models';
+import { AppState } from '../../store';
+import {
+  getActivityDate,
+  getContextualStatus,
+  getDeclinedByName,
+  getStatusBasedActivity,
+  getDateFromTimeZone,
+  getBeforeDateFromTimeZone,
+  isArray, getExpiryAlertDate, isObject
+} from '../../utils';
+import { isNullOrUndefined } from '@syncfusion/ej2-base';
+import CopyClipboard from '../common/copy-clipboard.vue';
+import OverviewDetail from './overview-detail.vue';
+import OverviewDetailSpinner from './overview-section-spinner.vue';
+import ReminderSettings from './reminder-settings.vue';
+import ExtendExpiry from './extend-expiry.vue';
+import Tags from './add-tagify.vue';
+import { validation, equalsIgnoreOrder, getScheduledSendDate } from '../../utils/common';
+
+const signalR = require('@aspnet/signalr');
+
+const CancelToken = axios.CancelToken;
+
+const customDeclineStatus = Vue.component("custom-decline-status", {
+  render: function (createElement) {
+    function buildElements (current) {
+      if (!isObject(current)) {
+        return;
+      }
+      const elements = [];
+      if (current.action === 'declined') {
+        const ele = createElement("span", current.boldContents[0]);
+        elements.push(ele);
+      } else if (current.action === 'adminDeclined') {
+        const ele = createElement("span", [createElement("span", { class: 'declined-right-content' }, current.boldContents[0]),
+          createElement("span", { style: 'color: #666e80;', class: 'declined-right-content' }, current.greyContents[0]),
+          createElement("span", { class: 'declined-right-content' }, current.boldContents[1]),
+          createElement("span", { style: 'color: #666e80;', class: 'declined-right-content' }, current.greyContents[1])]);
+        elements.push(ele);
+      }
+      return elements;
+    }
+
+    return createElement("span", buildElements(this.declinedSignerName));
+  },
+  props: ['declinedSignerName']
+})
+
+@Component({
+  components: {
+    CopyClipboard,
+    OverviewDetail,
+    ReminderSettings,
+    OverviewDetailSpinner,
+    ExtendExpiry,
+    Tags,
+    customDeclineStatus
+  },
+})
+export default class OverviewSectionComponent extends Vue {
+    $refs!: {
+        bsmessage: any;
+        showMore: any;
+        showLess: any;
+      uploadInput: HTMLInputElement;
+      bsmessagePrivate: any;
+      showMorePrivate: any;
+      showLessPrivate: any;
+    };
+
+    @Prop()
+    isDocumentLoading: boolean;
+
+    @Prop()
+    isPropertiesLoading: boolean;
+
+    @Prop()
+    reminderSettings: any;
+
+    @Prop()
+    canUseAutoRemainder: any;
+
+    @Prop()
+    canExtendExpiry: any;
+
+    @Prop()
+    canSenderEdit: any;
+
+    @Prop()
+    canAddTags : any;
+
+    @Prop({
+      default: function () {
+        return [];
+      },
+    })
+    ccEmails: any[];
+
+    @Prop({
+      default: function () {
+        return '';
+      },
+    })
+    documentMessageProp: string;
+
+    @Prop({
+      default: function () {
+        return '';
+      },
+    })
+    privateMessageProp: string;
+
+    @Prop({
+      default: function () {
+        return '';
+      },
+    })
+    expiryDateProp: string;
+
+    @Prop({
+      default: function () {
+        return false;
+      },
+    })
+    canUploadPrintAndSign: boolean;
+
+    @Prop({
+      default: function () {
+        return [];
+      },
+    })
+    documentFiles: { documentId: string; documentName: string }[];
+
+    @Prop({
+      default: () => false,
+    })
+    isDigitalSignEnabled: boolean;
+
+    @Prop({
+      default: () => false,
+    })
+    isPrintAndSignEnabled: boolean;
+
+    @Prop({
+      default: () => false,
+    })
+    isExpiryAlert: boolean;
+
+    @Prop({
+      default: () => '',
+    })
+    brandName: string;
+
+    @Prop({
+      default: () => '',
+    })
+    applicationName: string;
+
+    @Prop()
+    documentHasSingleFile: boolean;
+
+    isDeskewProcessStarted: boolean;
+    showExtendExpiry = false;
+    showAddTagDialog = false;
+    invalidWhiteSpace = 'bs-validation-text-addtag';
+    invalidCount = 'bs-validation-text-addtag';
+    invalidLength = 'bs-validation-text-addtag';
+    copyDocumentId () {
+      this.$nuxt.$userInsight.track(
+        AnalyticsAction.CopyDocumentId,
+        new UserInsight({
+          Action: UserInsightAction.CopyDocumentIdAction,
+          Origin: UserInsightOrigin.CopyDocumentIdIcon,
+          Page: UserInsightPage.SummaryPage,
+        }),
+      );
+      this.$nuxt.$store.commit('summary/copyTooltipContent', this.$nuxt.$t('documents.copied'));
+    }
+
+    onCopyTooltipClose () {
+      this.$nuxt.$store.commit('summary/copyTooltipContent', this.$nuxt.$t('documents.copyToClipboard'));
+    }
+
+    getDateFromTimeZone = getDateFromTimeZone;
+    public loadingText: string = `${this.$nuxt.$t('documents.loading')} ...`;
+    public isIntervalEditMode: boolean = false;
+    public ccItemsThreshold = 3;
+    public showUploadProgressModal = false;
+    public uploadPercentage: string = '0';
+    public uploadTotalPages: number = 0;
+    public currentUploadPage: number = 0;
+    public preventClose = true;
+    private signalRInstance = null;
+    public uploadedFileName = null;
+    private cancelToken: CancelTokenSource = null;
+    public enableCancelButton: boolean = false;
+    public isDocumentUploadFailed: boolean = false;
+
+    get currentUserId () {
+      return this.$nuxt.$store.getters.userId;
+    }
+
+    get documentLoadingClass () {
+      return this.isDocumentLoading ? 'overview-document-loading' : '';
+    }
+
+    get propertyLoadingClass () {
+      return this.isPropertiesLoading ? 'overview-document-loading' : '';
+    }
+
+    get stateAccessRights (): IAccessRights | null {
+      return this.$nuxt.$store.getters.summaryData;
+    }
+
+    get stateSummaryData (): IAccessRights[] {
+      return this.$nuxt.$store.state.summaryData;
+    }
+
+    get stateDocumentHistory (): IHistoryDetails[] | null {
+      return (this.$nuxt.$store.state as AppState).summary.documentActivityLog;
+    }
+
+    get labelDetails (): any {
+      if (isNullOrUndefined(this.stateAccessRights)) { return null } else if (this.stateAccessRights.labels !== null && this.stateAccessRights.labels !== undefined && this.stateAccessRights.labels.length !== 0) { return this.stateAccessRights.labels } else if (this.stateAccessRights.documentLabels !== null && this.stateAccessRights.documentLabels !== undefined && this.stateAccessRights.documentLabels.length !== 0) {
+        const label = this.stateAccessRights.documentLabels.filter(x => x.organizationId === this.$nuxt.$store.state.userData.organization_id);
+        return label.map(args => { return args.label });
+      } else if (isNullOrUndefined(this.stateAccessRights.labels) && isNullOrUndefined(this.stateAccessRights.documentLabels)) {
+        return this.stateAccessRights.tags;
+      }
+      return [];
+    }
+
+    @Watch('labelDetails')
+    labelDetailsWatcher () {
+      this.$nuxt.$store.commit('setUpdateLabels', this.labelDetails);
+    }
+
+    get isTeamDocuments () {
+      return this.$nuxt.$route.path.includes('teamdocuments/overview');
+    }
+
+    get IsCcorResourceOwner (): boolean {
+      return (
+        this.stateSummaryData[0].isSenderResourceOwner ||
+            this.ccEmails.includes(this.$nuxt.$store.state.userData.email)
+      );
+    }
+
+    get isStillValidDocument () {
+      return this.stateAccessRights && this.stateAccessRights.status === DocumentStatus.InProgress;
+    }
+
+    get documentId (): string {
+      return this.isDocumentLoading
+        ? this.loadingText
+        : this.stateAccessRights
+          ? this.stateAccessRights.documentId
+          : '-';
+    }
+
+    get organizationId (): string | null {
+      return this.isDocumentLoading
+        ? this.loadingText
+        : this.stateAccessRights
+          ? this.stateAccessRights.senderDetail
+            ? this.stateAccessRights.senderDetail.organizationId
+            : null
+          : null;
+    }
+
+    get documentStatus (): string {
+      return this.isDocumentLoading
+        ? this.loadingText
+        : this.stateAccessRights
+          ? this.stateAccessRights.status === DocumentStatus.Draft && this.stateAccessRights.scheduledSendOn == null
+            ? 'Draft'
+            : this.stateAccessRights.signerStatus
+          : '-';
+    }
+
+    get contextualStatus () {
+      if (
+        isNullOrUndefined(this.stateAccessRights) ||
+            this.isTeamDocuments ||
+            this.stateAccessRights.status === DocumentStatus.Declined ||
+            this.stateAccessRights.status === DocumentStatus.Draft
+      ) {
+        return '';
+      }
+
+      const currentUserId = this.$nuxt.$store.getters.userId;
+      const isDocumentReceiver = this.stateAccessRights.signerDetails.some(
+        e => e.accessUid === currentUserId,
+      );
+      const isDocumentSender = currentUserId === this.stateAccessRights.senderDetail.accessUid;
+
+      const status = getContextualStatus({
+        $nuxt: this.$nuxt,
+        accessRights: this.stateAccessRights,
+        currentUserId: currentUserId,
+        isDocumentReceiver: isDocumentReceiver,
+        isDocumentSender: isDocumentSender,
+      }).subStatus;
+
+      if (isNullOrUndefined(status) || status === '') {
+        return '';
+      }
+
+      return `(${status})`;
+    }
+
+    get stateIsDocumentSender (): boolean {
+      return this.$nuxt.$store.state.summary.isDocumentSender;
+    }
+
+    get canSendReminder (): boolean {
+      return (this.$nuxt.$store.state as AppState).summary.canSendReminder;
+    }
+
+    get isSignOrderEnabled (): boolean {
+      return this.stateAccessRights ? this.stateAccessRights.enableSigningOrder : false;
+    }
+
+    get isQESEnabled (): boolean {
+      if (!isNullOrUndefined(this.stateAccessRights)) {
+        const signer = [...this.stateAccessRights.signerDetails];
+        return signer.splice(-1)[0].enableQualifiedElectronicSignature;
+      }
+      return false;
+    }
+
+    get documentFileName (): any {
+      return this.documentFiles.length === 0 ? null : this.documentFiles;
+    }
+
+    get isDeclined (): boolean {
+      return this.stateAccessRights && this.stateAccessRights.status === DocumentStatus.Declined;
+    }
+
+    get documentSentBy (): string {
+      return this.isDocumentLoading
+        ? this.loadingText
+        : this.stateAccessRights
+          ? this.stateAccessRights.senderDetail.name
+          : '-';
+    }
+
+    get isDocumentSender (): boolean {
+      if (
+        isNullOrUndefined(this.stateAccessRights) ||
+            isNullOrUndefined(this.$nuxt.$store.state.userData)
+      ) {
+        return false;
+      }
+      return this.stateAccessRights.senderDetail.accessUid === this.$nuxt.$store.state.userData.user_id;
+    }
+
+    get isBehalfDocument (): boolean {
+      return !isNullOrUndefined(this.stateAccessRights) && !isNullOrUndefined(this.stateAccessRights.accessRightsOnBehalfOfDetails);
+    }
+
+    get isBehalfUsers (): boolean {
+      if (isNullOrUndefined(this.stateAccessRights) || isNullOrUndefined(this.stateAccessRights.accessRightsOnBehalfOfDetails)) {
+        return true;
+      }
+      return this.stateAccessRights.accessRightsOnBehalfOfDetails.emailAddress.toLowerCase() === this.$nuxt.$store.state.userData.email.toLowerCase() ||
+          this.stateAccessRights.accessRightsOnBehalfOfDetails.userId === this.$nuxt.$store.state.userData.user_id;
+    }
+
+    get behalfSenderName (): string {
+      if (isNullOrUndefined(this.stateAccessRights) || isNullOrUndefined(this.stateAccessRights.accessRightsOnBehalfOfDetails)) {
+        return '';
+      }
+      return this.stateAccessRights.accessRightsOnBehalfOfDetails.name;
+    }
+
+    get declinedSignerName (): DeclineStatus {
+      if (
+        isNullOrUndefined(this.stateAccessRights) ||
+            isNullOrUndefined(this.stateDocumentHistory) ||
+            this.stateDocumentHistory.length <= 0
+      ) {
+        return null;
+      }
+      return getDeclinedByName(this.stateAccessRights, this.stateDocumentHistory, this.$nuxt);
+    }
+
+    get isRevoked (): boolean {
+      return this.stateAccessRights && this.stateAccessRights.status === DocumentStatus.Revoked;
+    }
+
+    get getReason (): string {
+      return this.$nuxt.$store.state.summary.reasonMessage;
+    }
+
+    get isDraft () {
+      return (
+        this.stateAccessRights &&
+            !(this.stateAccessRights instanceof Array) &&
+            this.stateAccessRights.status === 'Draft'
+      );
+    }
+
+    get isScheduledDocument () {
+      return (
+        this.stateAccessRights &&
+            !(this.stateAccessRights instanceof Array) &&
+            this.stateAccessRights.status === 'Draft' && this.stateAccessRights.signerStatus === SignerStatus.ScheduledToBeSent && this.stateAccessRights.scheduledSendOn != null
+      );
+    }
+
+    get documentSentOn (): string {
+      return this.isDocumentLoading
+        ? this.loadingText
+        : this.isScheduledDocument
+          ? getScheduledSendDate(this.stateAccessRights as any, this.$nuxt.$store.state.dateFormat, this.$nuxt)
+          : this.isDraft
+            ? '-'
+            : this.stateAccessRights
+              ? getDateFromTimeZone(this.stateAccessRights.createdDate, this.$nuxt)
+              : '-';
+    }
+
+    get sentOnOrScheduledOn (): string {
+      if (this.isScheduledDocument) {
+        return this.$nuxt.$t('documents.scheduledOn');
+      }
+
+      return this.$nuxt.$t('documents.sentOn');
+    }
+
+    get documentContextualTitle (): string {
+      if (isNullOrUndefined(this.stateAccessRights)) {
+        return this.$nuxt.$t('documents.expiredon');
+      }
+
+      return getStatusBasedActivity(this.stateAccessRights, this.$nuxt);
+    }
+
+    get documentExpiresBy (): string {
+      return this.isDocumentLoading
+        ? this.loadingText
+        : isNullOrUndefined(this.expiryDateProp) || this.expiryDateProp === ''
+          ? '-'
+          : getDateFromTimeZone(this.expiryDateProp, this.$nuxt);
+    }
+
+    get documentLastActivity (): string {
+      return this.isDocumentLoading
+        ? this.loadingText
+        : this.isScheduledDocument
+          ? getDateFromTimeZone(this.stateAccessRights.activityDate, this.$nuxt)
+          : this.isDraft
+            ? '-'
+            : this.stateAccessRights
+              ? getDateFromTimeZone(this.stateAccessRights.activityDate, this.$nuxt)
+              : '-';
+    }
+
+    get documentMessage (): string {
+      return this.isDocumentLoading
+        ? this.loadingText
+        : this.documentMessageProp === ''
+          ? '-'
+          : this.documentMessageProp;
+    }
+
+    get privateMessage (): string {
+      return this.isDocumentLoading
+        ? this.loadingText
+        : isNullOrUndefined(this.privateMessageProp) || this.privateMessageProp === ''
+          ? '-'
+          : this.privateMessageProp;
+    }
+
+    get ccDetails (): string[] | string {
+      if (this.isPropertiesLoading) {
+        return this.loadingText;
+      }
+      if (this.ccEmails.length) {
+        return this.ccEmails.join(', ').split(' ');
+      } else {
+        return null;
+      }
+    }
+
+    get ccDetailsPartOne () {
+      if (this.ccDetails && isArray(this.ccDetails)) {
+        return [...this.ccDetails].splice(0, this.ccItemsThreshold);
+      }
+      return this.ccDetails;
+    }
+
+    get ccDetailsPartTwo () {
+      if (this.ccDetails && isArray(this.ccDetails)) {
+        return [...this.ccDetails].splice(this.ccItemsThreshold);
+      }
+      return this.ccDetails;
+    }
+
+    get lastActivity (): string {
+      if (
+        isNullOrUndefined(this.stateAccessRights) ||
+            isNullOrUndefined(this.stateAccessRights.activityLog) ||
+            this.isTeamDocuments ||
+            this.stateAccessRights.status === DocumentStatus.Draft
+      ) {
+        return '';
+      }
+      return this.stateAccessRights.activityLog.includes('created the document')
+        ? ''
+        : `(${this.stateAccessRights.activityLog})`;
+    }
+
+    get getStatusColor (): string {
+      if (isNullOrUndefined(this.stateAccessRights)) {
+        return '';
+      }
+
+      if (
+        this.stateAccessRights.signerStatus === SignerStatus.WaitingForMe ||
+            this.stateAccessRights.signerStatus === SignerStatus.WaitingForMembers
+      ) {
+        return 'vs-waiting-me-color';
+      } else if (this.stateAccessRights.signerStatus === SignerStatus.NeedsAttention) {
+        return 'vs-attention-color';
+      } else if (this.stateAccessRights.signerStatus === SignerStatus.ScheduledToBeSent) {
+        return 'vs-scheduled-color';
+      }
+
+      switch (this.stateAccessRights.status) {
+        case DocumentStatus.Declined:
+          return 'vs-declined-color';
+
+        case DocumentStatus.Completed:
+          return 'vs-completed-color';
+
+        case DocumentStatus.Revoked:
+          return 'vs-revoked-color';
+
+        case DocumentStatus.Expired:
+          return 'vs-expired-color';
+
+        case DocumentStatus.Draft:
+          return '';
+
+        default:
+          return 'vs-waiting-color';
+      }
+    }
+
+    get finalizedStateDate (): string {
+      return this.isDocumentLoading
+        ? this.loadingText
+        : getActivityDate(this.stateAccessRights, this.$nuxt);
+    }
+
+    get expiryAlertDate (): string {
+      return this.isDocumentLoading
+        ? this.loadingText
+        : this.stateAccessRights == null
+          ? getBeforeDateFromTimeZone(this.expiryDateProp, this.$nuxt, 1)
+          : getExpiryAlertDate(this.expiryDateProp, this.$nuxt, this.stateAccessRights.createdDate);
+    }
+
+    get expiryDate (): string {
+      return this.stateAccessRights == null ? null : this.stateAccessRights.expiryDate;
+    }
+
+    get canShowFinalizedDate () {
+      if (this.stateAccessRights == null) {
+        return false;
+      }
+
+      return this.stateAccessRights.completedOn != null || this.expiryDateProp != null;
+    }
+
+    get isBulklinkDocument () {
+      return (this as any).$nuxt.$store.state.isBulklinkDocument;
+    }
+
+    get documentDownloadOption () {
+      if (this.stateAccessRights && (this.stateAccessRights.documentDownloadOption === DocumentDownloadOption.Individual ||
+        this.stateAccessRights.documentDownloadOption === DocumentDownloadOption.Individually || this.stateAccessRights.enableIndividualDocumentDownloads)) {
+        return DocumentDownloadOption.Individually;
+      }
+      return DocumentDownloadOption.Combined;
+    }
+
+    get inEditingMode () {
+      return this.stateAccessRights && this.stateAccessRights.inEditingMode;
+    }
+
+    refreshOverview () {
+      this.$emit('refreshOverview');
+    }
+
+    mounted () {
+      this.$nuxt.$store.commit('setUpdateLabels', []);
+    }
+
+    get check (): boolean {
+      const ref = this;
+      const tagdet = this.$nuxt.$store.state.updateLabels;
+      return !!(equalsIgnoreOrder(this.labelDetails, tagdet) || !validation(ref, tagdet));
+    }
+
+    save () {
+      const tags = this.$nuxt.$store.state.updateLabels;
+      this.invalidCount = this.invalidLength = this.invalidWhiteSpace = 'bs-validation-text-addtag';
+      const ref = this;
+      if (!validation(ref, tags)) {
+        return;
+      }
+      this.$nuxt.$userInsight.track(
+        AnalyticsAction.AddManageTags,
+        new UserInsight({
+          Action: UserInsightAction.AddManageTagsAction,
+          Origin: UserInsightOrigin.AddManageTagsButton,
+          Page: UserInsightPage.SummaryPage,
+        }),
+      );
+      const docID = this.stateAccessRights.documentId;
+      this.$spinner.displaySpinner();
+      const data = this.$nuxt.$store.state.updateLabels;
+      this.$api.document.addTags(docID, data).then(() => {
+        this.$spinner.hideSpinner();
+        this.showAddTagDialog = false;
+        this.$nuxt.$toastService.show(this.$nuxt.$t('toast.addTagSuccess'), 'bs_toast_success', 'bs_addTag_toast');
+        this.$emit('refreshOverview');
+      }).catch(() => {
+        this.$nuxt.$toastService.show(this.$nuxt.$t('toast.addTagFailure'), 'bs_toast_failure', 'bs_addTag_toast');
+        this.$spinner.hideSpinner();
+        this.showAddTagDialog = false;
+      });
+    }
+
+    showAddDialog () {
+      this.showAddTagDialog = true;
+      this.$nuxt.$userInsight.track(
+        AnalyticsAction.AddManageTags,
+        new UserInsight({
+          Action: UserInsightAction.AddManageTagsAction,
+          Origin: UserInsightOrigin.AddManageTagsButton,
+          Page: UserInsightPage.SummaryPage,
+        }),
+      );
+    }
+
+    cancel () {
+      this.invalidCount = this.invalidLength = this.invalidWhiteSpace = 'bs-validation-text-addtag';
+      this.$nuxt.$store.commit('setUpdateLabels', this.labelDetails);
+      this.showAddTagDialog = false;
+    }
+
+    updated () {
+      if (!isNullOrUndefined(this.$refs.bsmessage) && this.$refs.bsmessage.offsetHeight > 100) {
+        this.$refs.bsmessage.style.height = '100px';
+        this.$refs.bsmessage.style.overflow = 'hidden';
+        this.$refs.showMore.style.display = 'block';
+        this.$refs.showLess.style.display = 'none';
+      }
+      if (!isNullOrUndefined(this.$refs.bsmessagePrivate) && this.$refs.bsmessagePrivate.offsetHeight > 100) {
+        this.$refs.bsmessagePrivate.style.overflow = 'hidden';
+        this.updatePrivateMsgElement("100px", "none", "block")
+      }
+    }
+
+    get canDisplayExpiryDate () {
+      const isBulkLinkDoc = this.isBulklinkDocument;
+      if (this.stateAccessRights == null) {
+        return false;
+      } else if (this.canShowFinalizedDate && !isBulkLinkDoc) {
+        return true;
+      } else if (isBulkLinkDoc && this.stateAccessRights.status !== 'InProgress') {
+        return true;
+      } else if (isBulkLinkDoc && this.expiryDateProp != null && new Date(this.expiryDateProp) > new Date(this.stateAccessRights.createdDate)) {
+        return true;
+      }
+
+      return false;
+    }
+
+    establishSignalRConnection () {
+      this.signalRInstance = new signalR.HubConnectionBuilder().withUrl('/notificationHub').build();
+      this.signalRInstance.on(this.documentId + this.currentUserId, this.onNotificationReceived);
+      this.signalRInstance.start();
+    }
+
+    closeSignalRConnection () {
+      if (this.signalRInstance) {
+        this.signalRInstance.off(this.documentId + this.currentUserId, this.onNotificationReceived);
+      }
+    }
+
+    onNotificationReceived (data: any) {
+      if (data.payloadType === 'documentUpload') {
+        this.handleUploadNotification(data);
+      }
+    }
+
+    updatePrivateMsgElement (bsmessage: any, showLessPrivate: any, showMorePrivate: any) {
+      this.$refs.bsmessagePrivate.style.height = bsmessage;
+      this.$refs.showLessPrivate.style.display = showLessPrivate;
+      this.$refs.showMorePrivate.style.display = showMorePrivate;
+    }
+
+    showMore () {
+      this.$refs.bsmessage.style.height = 'auto';
+      this.$refs.showLess.style.display = 'block';
+      this.$refs.showMore.style.display = 'none';
+    }
+
+    showMorePrivate () {
+      this.updatePrivateMsgElement("auto", "block", "none")
+    }
+
+    showLess () {
+      this.$refs.bsmessage.style.height = '100px';
+      this.$refs.showLess.style.display = 'none';
+      this.$refs.showMore.style.display = 'block';
+    }
+
+    showLessPrivate () {
+      this.updatePrivateMsgElement("100px", "none", "block")
+    }
+
+    formatDate (date: any): string {
+      return moment(date).format(this.$nuxt.$store.state.dateFormat);
+    }
+
+    reminderEditMode (value: boolean) {
+      this.isIntervalEditMode = value;
+    }
+
+    and below json data is from this.aceessright
+    {
+  "folderName": null,
+  "signerStatus": "Waiting for others",
+  "displayStatus": null,
+  "isExpiringSoon": false,
+  "activityLog": "Sakthi Dinesh Pownraj has sent the document",
+  "canView": false,
+  "canDownloadAuditTrail": false,
+  "canDownloadAttachment": false,
+  "canDownload": false,
+  "canEdit": false,
+  "canShare": false,
+  "canDelete": false,
+  "canRevokeCleanUp": false,
+  "canDecline": false,
+  "canRevoke": false,
+  "canReassign": false,
+  "canSign": false,
+  "canSendReminder": false,
+  "canArchive": false,
+  "canClone": false,
+  "canPermanentDelete": false,
+  "canRestore": false,
+  "canUnArchive": false,
+  "activityTimeStamp": "0001-01-01T00:00:00",
+  "memberName": null,
+  "isSenderResourceOwner": true,
+  "isSignerResourceOwner": false,
+  "azureETag": null,
+  "canAddTags": false,
+  "canEditDocument": false,
+  "canEditScheduledDate": false,
+  "canSendScheduledDocument": false,
+  "id": "f30b6d5f-407e-49b2-a6a3-bf3df5d5d3ca86363d38-945f-4efa-9918-d4b7639c4aea",
+  "documentId": "f30b6d5f-407e-49b2-a6a3-bf3df5d5d3ca",
+  "bulkSendDocumentId": null,
+  "activityBy": "sakthidinesh.pownraj+22@syncfusion.com",
+  "messageTitle": "Sent from API SDK",
+  "documentLabels": null,
+  "accessRightsOnBehalfOfDetails": {
+    "name": "Rakshanaa",
+    "emailAddress": "rakshanaa.kumar+22@syncfusion.com",
+    "userId": "1348b0b2-a2b2-4e6c-bc4f-a0d1d8f0f890",
+    "organizationId": "86363d38-945f-4efa-9918-d4b7639c4aea",
+    "teamId": "baea0e07-168a-4f3e-a22d-72045080dddd"
+  },
+  "documentInfo": [
+    {
+      "language": "English",
+      "title": "Sent from API SDK",
+      "description": "This is document message sent from API SDK"
+    }
+  ],
+  "tags": [],
+  "senderTimeZone": "Asia/Kolkata",
+  "signedDocumentHash": null,
+  "seperateSignedDocumentHashes": null,
+  "createdDate": "2025-06-25T08:44:45.2661831Z",
+  "completedOn": null,
+  "activityAction": "None",
+  "activityName": "Sakthi Dinesh Pownraj",
+  "activityDate": "2025-06-25T08:44:45.2661832Z",
+  "recipientOrgId": "86363d38-945f-4efa-9918-d4b7639c4aea",
+  "senderDetail": {
+    "id": null,
+    "emailAddress": "sakthidinesh.pownraj+22@syncfusion.com",
+    "userId": "1348b0b2-a2b2-4e6c-bc4f-a0d1d8f0f890",
+    "organizationId": "86363d38-945f-4efa-9918-d4b7639c4aea",
+    "teamId": "baea0e07-168a-4f3e-a22d-72045080dddd",
+    "isViewed": false,
+    "isDeleted": false,
+    "deletedDate": null,
+    "isArchive": false,
+    "displayStatus": 2,
+    "accessUid": "1348b0b2-a2b2-4e6c-bc4f-a0d1d8f0f890",
+    "name": "Sakthi Dinesh Pownraj",
+    "mailLinkSettings": null
+  },
+  "cCDetails": [],
+  "signerDetails": [
+    {
+      "id": "64ee17ba-31c0-4623-b41e-844dd080c65d",
+      "signerName": "rakshnaa kumar",
+      "signType": 0,
+      "signerCompany": null,
+      "signerPhone": null,
+      "signingGroupDetails": null,
+      "accessUid": "c6949484-25c5-4d70-b36e-686d619f7ef4",
+      "signerEmail": "rakshanaa.kumar+1@syncfusion.com",
+      "signerRole": "",
+      "userId": "c6949484-25c5-4d70-b36e-686d619f7ef4",
+      "organizationId": "d6edb906-d3a7-44d7-8b75-9dcedc57cc84",
+      "teamId": "dda1ad73-071b-40d5-ad27-387018cba2ce",
+      "zOrder": 1,
+      "completedDate": null,
+      "enableEditRecipients": true,
+      "enableDeleteRecipients": true,
+      "enableAccessCode": true,
+      "enableEmailOTP": false,
+      "enableSMSOTP": false,
+      "deliveryMode": "Email",
+      "phoneNumberWithCountryCode": null,
+      "isViewed": false,
+      "viewDate": null,
+      "isArchive": false,
+      "isDeleted": false,
+      "deletedDate": null,
+      "isAuthenticationFailed": null,
+      "isDeliveryFailed": false,
+      "isReportedAsSpam": false,
+      "isReassigned": false,
+      "signerType": 1,
+      "status": "NotCompleted",
+      "displayStatus": 1,
+      "printAndSignDate": null,
+      "enablePrintAndSign": false,
+      "canOwnerReassign": false,
+      "canOwnerDecline": false,
+      "hostName": "",
+      "hostEmail": "",
+      "hostUserId": null,
+      "hostAccessUid": null,
+      "hostTeamId": null,
+      "hostOrganizationId": null,
+      "hostDisplayStatus": 0,
+      "isHostDeleted": false,
+      "hostDeletedDate": null,
+      "roleIndex": 1,
+      "oldSignerId": null,
+      "mailLinkSettings": null,
+      "signerAuthType": "AccessCode",
+      "authenticationStatus": null,
+      "selectedLanguage": "English",
+      "allowConfigureFields": false,
+      "evroTrustResponse": null,
+      "isQesVerificationLimitExceeded": false,
+      "enableQualifiedElectronicSignature": false,
+      "sno": 1,
+      "tempId": "0952467669"
+    }
+  ],
+  "status": "InProgress",
+  "accessType": "Use",
+  "DocumentType": "Document",
+  "linkId": "",
+  "enableSigningOrder": true,
+  "accessTid": null,
+  "templateName": null,
+  "templateDescription": null,
+  "templateVersion": null,
+  "expiryDate": "2025-08-24T18:29:59Z",
+  "enableDigitalSign": null,
+  "enableEmbeddedSigning": false,
+  "enableReassign": true,
+  "enableIndividualDocumentDownloads": false,
+  "documentDownloadOption": "Combined",
+  "hasAttachment": false,
+  "combineAuditTrail": true,
+  "combineAttachment": true,
+  "selectedBrandId": "e4de7a0a-f9e3-44ba-8f21-2c9181720991",
+  "brandId": "e4de7a0a-f9e3-44ba-8f21-2c9181720991",
+  "templateLabels": null,
+  "scheduledDeletionOn": null,
+  "scheduledSendOn": null,
+  "inEditingMode": false,
+  "downloadFileName": ""
+}
+Currently, BoldSign logs the "User Activity" in document history using the API Key owner instead who performs the action. To improve clarity, it's important to consider incorporating the "onBehalf" name. This enhancement would provide clearer context in the "User Activity" section of the document history.
+Example:
+"SenderName (on behalf of OnBehalName) downloaded".
