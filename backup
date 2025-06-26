@@ -1615,3 +1615,80 @@ export default class OverviewSectionComponent extends Vue {
 Currently, BoldSign logs the "User Activity" in document history using the API Key owner instead who performs the action. To improve clarity, it's important to consider incorporating the "onBehalf" name. This enhancement would provide clearer context in the "User Activity" section of the document history.
 Example:
 "SenderName (on behalf of OnBehalName) downloaded".
+
+
+{
+  "index": "3",
+  "id": "d535bd78-690b-48dc-bcd2-263888192c2e",
+  "attachmentDetails": null,
+  "documentId": "5bd4fe57-911a-4d76-a507-723c9d87ea98",
+  "userId": "1348b0b2-a2b2-4e6c-bc4f-a0d1d8f0f890",
+  "teamId": null,
+  "organizationId": null,
+  "name": "Nandha kishore(Admin)",
+  "email": "nanda.kishore+12@syncfusion.com",
+  "toName": "",
+  "toEmail": "",
+  "timestamp": "2025-06-25T12:48:38Z",
+  "ipaddress": "10.142.15.216",
+  "deviceDetails": {
+    "browser": "Generic",
+    "platform": null,
+    "device": "Desktop"
+  },
+  "action": "Sent",
+  "recipients": [
+    {
+      "recipientName": "boldsigntest",
+      "recipientEmail": "BoldSignTestBySakthi@syncfusion.com",
+      "recipientPhoneNumber": null,
+      "zOrder": 1,
+      "signType": 0,
+      "groupName": null
+    }
+  ],
+  "auditLog": null,
+  "secretVersion": "6117d91b16ca4d8385950673b9bb9ea9",
+  "secretName": "AuditLogSecretKey",
+  "fromName": null,
+  "reason": null,
+  "fromEmail": null,
+  "adminOrgId": null,
+  "phoneNumber": null,
+  "sessionId": null,
+  "toPhoneNumber": null,
+  "recipientChangeLogs": null,
+  "isSandboxMode": false,
+  "evrotrustTransactionId": null,
+  "evrotrustUser": null,
+  "evrotrustUserType": null,
+  "evrotrustRejectReason": null,
+  "modifiedCount": 0,
+  "column": {
+    "disableHtmlEncode": true,
+    "allowSorting": false,
+    "allowResizing": true,
+    "allowFiltering": true,
+    "allowGrouping": true,
+    "allowReordering": true,
+    "showColumnMenu": true,
+    "enableGroupByFormat": false,
+    "allowEditing": true,
+    "showInColumnChooser": true,
+    "allowSearching": true,
+    "autoFit": false,
+    "sortDirection": "Descending",
+    "field": "name",
+    "width": "350px",
+    "uid": "grid-column15",
+    "foreignKeyField": "name",
+    "visible": true,
+    "index": 2,
+    "type": "string"
+  }
+}
+above is this.data 
+need to change that if onbehalfdetails is present replace the sender name with activity by in acceressright json and replace on behalf withonbhealfdetils name in useractivity content
+urrently, BoldSign logs the "User Activity" in document history using the API Key owner instead who performs the action. To improve clarity, it's important to consider incorporating the "onBehalf" name. This enhancement would provide clearer context in the "User Activity" section of the document history.
+Example:
+"SenderName (on behalf of OnBehalName) downloaded".
